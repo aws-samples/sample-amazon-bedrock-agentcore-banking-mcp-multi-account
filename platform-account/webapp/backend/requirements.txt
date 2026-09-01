@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+boto3
+pydantic
+httpx
+PyJWT[crypto]

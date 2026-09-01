@@ -1,0 +1,16 @@
+{
+  "_comment": "Reference config — applied to Runtime via API in deploy.sh Step 10 (agentcore CLI doesn't read this for authorizer)",
+  "agents": [
+    {
+      "name": "lobfederation-agent",
+      "authorizerType": "CUSTOM_JWT",
+      "authorizerConfiguration": {
+        "customJwtAuthorizer": {
+          "discoveryUrl": "https://your-org.okta.com/oauth2/<auth-server-id>/.well-known/openid-configuration",
+          "allowedAudience": ["lobfederation"]
+        }
+      },
+      "requestHeaderAllowlist": ["Authorization"]
+    }
+  ]
+}

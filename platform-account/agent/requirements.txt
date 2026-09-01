@@ -1,0 +1,5 @@
+bedrock-agentcore
+strands-agents
+strands-agents-builder
+mcp>=1.10.0
+boto3

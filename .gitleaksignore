@@ -1,0 +1,9 @@
+# False positives: Cognito app client IDs are public identifiers, not secrets
+# See: https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-client-apps.html
+ee2edf3dba34747eda1406294d14ecbc9baa43dd:platform-account/agent/runtime_config.json:generic-api-key:4
+0a1967a6d7e829edcf56d22b6d75fead183834ad:infra/platform/cdk.json:generic-api-key:7
+e4b0407002ba1eab1d50ab3a9a08b217c661c245:infra/platform/cdk.json:generic-api-key:7
+# False positives: CDK context keys (project_prefix, feature flags) misidentified as API keys
+4266141544751ea1b0a5ac12a9a14db6ea36c544:infra/platform/cdk.json:generic-api-key:7
+7ffaedcb1702bffdb0f1221959a16b655521a821:infra/platform/cdk.json:generic-api-key:13
+4266141544751ea1b0a5ac12a9a14db6ea36c544:infra/platform/cdk.json:generic-api-key:10

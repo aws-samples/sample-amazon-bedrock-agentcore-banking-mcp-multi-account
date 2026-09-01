@@ -1,0 +1,72 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+platform-account/webapp/frontend/build/
+
+# Environment-specific configs (contain account IDs, ARNs, resource IDs)
+okta_config.json
+platform-account/gateway/cognito_config.json
+platform-account/gateway/gateway_config.json
+platform-account/gateway/runtime_arns.json
+gateway_config.json
+registry_config.json
+platform-account/agent/runtime_config.json
+
+# CDK context (contains account-specific VPC/subnet IDs)
+infra/platform/cdk.context.json
+infra/lob/cdk.context.json
+infra/platform/cdk.out/
+infra/lob/cdk.out/
+
+# AgentCore deployment configs (account-specific)
+.bedrock_agentcore.yaml
+.bedrock_agentcore/
+
+# Build timestamps
+.build_timestamp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Logs
+*.log
+
+# Terraform state (if used later)
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Personal reference docs (not for repo)
+AUTH_DEEP_DIVE.md
+DESIGN.md
+
+# Local-only docs (scope docs, handoffs, checkpoints — not for repo)
+*.local.md
+
+# Local env overrides (.env.example is committed; real .env is not)
+.env
+.env.*
+!.env.example
+
+# Kiro steering (session-specific, not for repo)
+.kiro/
+
+# Build reference docs (local-only)
+build-ref/

@@ -1,0 +1,7 @@
+{
+  "app": "python3 app.py",
+  "context": {
+    "project_prefix": "LOBFederation",
+    "@aws-cdk/customresources:installLatestAwsSdkDefault": false
+  }
+}
