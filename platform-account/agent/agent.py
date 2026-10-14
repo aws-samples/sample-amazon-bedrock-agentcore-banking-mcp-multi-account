@@ -8,11 +8,11 @@ Auth (User Identity Propagation): The user's JWT (obtained during Okta login)
 is forwarded from the ECS backend → Agent Runtime → Gateway. The Runtime uses
 customJWTAuthorizer to validate the token and makes it available via
 context.request_headers["Authorization"]. The agent passes it directly to the
-Gateway, where Cedar evaluates per-user policies. Gateway→LOB outbound auth
+Gateway, where a Cedar policy enforces tool-level authorization. Gateway→LOB outbound auth
 remains M2M (client_credentials via the credential provider) — unchanged.
 
 Discovery: search_registry_records() → LOB names + metadata
-Invocation: Gateway MCP (user JWT) → Cedar per-user auth → LOB MCP (M2M)
+Invocation: Gateway MCP (user JWT) → Cedar tool-level auth → LOB MCP (M2M)
 """
 import os
 import json
@@ -139,7 +139,7 @@ def invoke(payload, context=None):
 
     # User Identity Propagation: read the user's JWT from request headers.
     # The Runtime's customJWTAuthorizer already validated it. We forward it
-    # directly to the Gateway so Cedar can authorize per-user.
+    # directly to the Gateway so Cedar can authorize the tool call.
     request_headers = {}
     if context and hasattr(context, "request_headers"):
         request_headers = context.request_headers or {}
