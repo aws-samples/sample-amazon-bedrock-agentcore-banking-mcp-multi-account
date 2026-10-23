@@ -2,13 +2,98 @@
 
 ## Overview
 
-Cross-account tool federation using Amazon Bedrock AgentCore. A single AI agent in a central platform account discovers and invokes **16 banking tools** federated across **3 line-of-business (LOB) AWS accounts** — combining DynamoDB queries with Bedrock Knowledge Base RAG over policy PDFs — with user identity propagation (JWT flows to Gateway for Cedar per-user auth), OAuth M2M for cross-account LOB calls, dynamic tool discovery via Agent Registry, and a React webapp with real-time agent trace visualization.
+Cross-account tool federation using Amazon Bedrock AgentCore. A single AI agent in a central platform account discovers and invokes **16 banking tools** federated across **3 line-of-business (LOB) AWS accounts** — combining DynamoDB queries with Bedrock Knowledge Base RAG over policy PDFs — with the user's JWT forwarded to the Gateway (where a Cedar policy enforces tool-level authorization), OAuth M2M for cross-account LOB calls, dynamic tool discovery via Agent Registry, and a React webapp with real-time agent trace visualization.
 
-This pattern demonstrates **one agent orchestrating tools across organizational boundaries** without requiring cross-account IAM roles. Each LOB retains full data sovereignty — their DynamoDB tables, S3 documents, and Knowledge Bases never leave their account. The agent discovers LOB capabilities at startup via Agent Registry (`search_registry_records()`), then invokes tools through AgentCore Gateway using the user's JWT (for Cedar per-user authorization), with the Gateway routing each call to the owning LOB by its tool-name prefix (`{lob-name}___{tool-name}`).
+This pattern demonstrates **one agent orchestrating tools across organizational boundaries** without requiring cross-account IAM roles. Each LOB retains full data sovereignty — their DynamoDB tables, S3 documents, and Knowledge Bases never leave their account. The agent discovers LOB capabilities at startup via Agent Registry (`search_registry_records()`), then invokes tools through AgentCore Gateway using the user's JWT, which the Gateway's Cedar policy evaluates for tool-level authorization, with the Gateway routing each call to the owning LOB by its tool-name prefix (`{lob-name}___{tool-name}`).
 
 The result is a composable, team-independent architecture: when a new LOB onboards, they deploy their MCP server, register in the Agent Registry, and the agent discovers them automatically — no agent redeployment needed.
 
 > **⚠️ Disclaimer:** Proof-of-concept demo — NOT for production use. All customer data is synthetic. See [Production Considerations](#production-considerations) for hardening guidance.
+
+## Security Model and Scope
+
+This sample is an **internal tool for bank relationship managers (RMs)**, who are expected to
+work across the full portfolio of customers they serve. End customers do **not** log in to this
+application. The signed-in user is an RM/analyst, not a customer, so an authenticated user
+reading or acting on any customer record is the **intended** behavior for this demo, not a
+cross-customer access flaw.
+
+What the authorization layer actually enforces in this sample:
+- The Cedar policy attached to the Gateway runs in ENFORCE mode and permits every
+  authenticated user to call every tool, **except** `delete_customer`, which is denied
+  (see Demo Scenario 7). It is a tool-level allow/deny demonstration — it is **not**
+  per-internal-user or per-record authorization.
+- The MCP tool functions query by the `customer_id` / `account_id` passed in the request.
+  They do **not** perform server-side ownership checks, by design, because the RM persona is
+  expected to access all customers. `evaluate.py` exercises this intended access model
+  (an authenticated RM is permitted across customers and LOBs; `delete_customer` is denied).
+
+**Adapting this for a customer-facing application:** if you extend this sample so that end
+customers (not RMs) log in, you MUST add record-level authorization so a user can only access
+their own data. Two layers are recommended:
+
+1. **Cedar condition at the Gateway** comparing a tool argument to a caller identity claim.
+   This requires adding a custom claim (e.g. `customer_id`) to the Okta token first — the
+   sample's tokens do not carry one by default. The argument you compare against must be a
+   declared parameter of that tool in its MCP input schema, or AgentCore rejects the policy at
+   creation time. Example (get_accounts takes a customer_id argument):
+
+   ```cedar
+   permit(
+     principal is AgentCore::OAuthUser,
+     action == AgentCore::Action::"retail-banking___get_accounts",
+     resource == AgentCore::Gateway::"<gateway-arn>"
+   )
+   when {
+     principal.hasTag("customer_id") &&
+     principal.getTag("customer_id") == context.input.customer_id
+   };
+   ```
+
+   You can also scope tools by group — e.g. a `banking-rm` group for read-only access and a
+   `banking-tellers` group for money movement — using the caller's `groups` claim. Because a
+   JWT array claim is stored as its JSON text, match it with `like` (not a set operation).
+   These examples are illustrative and assume a `groups` claim has been added to the Okta
+   tokens, which the sample doesn't include by default. They show a subset of tools; other
+   tools, such as `lending-wealth___check_eligibility`, `lending-wealth___get_emi_details`
+   and `transaction-banking___schedule_payment`, can be added to the right group the same way.
+
+   ```cedar
+   // Relationship managers: read-only across all 3 LOBs
+   permit(
+     principal is AgentCore::OAuthUser,
+     action in [
+       AgentCore::Action::"retail-banking___get_customer",
+       AgentCore::Action::"retail-banking___get_accounts",
+       AgentCore::Action::"retail-banking___get_balance",
+       AgentCore::Action::"retail-banking___get_profile",
+       AgentCore::Action::"transaction-banking___get_payments",
+       AgentCore::Action::"transaction-banking___get_beneficiaries",
+       AgentCore::Action::"lending-wealth___get_loans",
+       AgentCore::Action::"lending-wealth___get_credit_score",
+       AgentCore::Action::"lending-wealth___search_lending_policies"
+     ],
+     resource == AgentCore::Gateway::"<gateway_arn>"
+   )
+   when { principal.hasTag("groups") && principal.getTag("groups") like "*\"banking-rm\"*" };
+
+   // Tellers: money movement
+   permit(
+     principal is AgentCore::OAuthUser,
+     action in [
+       AgentCore::Action::"transaction-banking___transfer_funds",
+       AgentCore::Action::"retail-banking___update_balance",
+       AgentCore::Action::"retail-banking___get_balance"
+     ],
+     resource == AgentCore::Gateway::"<gateway_arn>"
+   )
+   when { principal.hasTag("groups") && principal.getTag("groups") like "*\"banking-tellers\"*" };
+   ```
+
+2. **Server-side ownership checks inside each MCP tool** as defense in depth: resolve the
+   authenticated user's identity and verify the requested `customer_id` / `account_id`
+   belongs to them before reading or writing, so the check holds even for any path that does
+   not traverse the Gateway.
 
 ## Architecture
 
@@ -214,11 +299,11 @@ Prompts once for confirmation, then destroys all resources in reverse-deploy ord
 | Component | Role |
 |---|---|
 | CloudFront → ALB → ECS Fargate | 1 task, 2 containers: React frontend (nginx :80) + FastAPI backend (:8000). |
-| Okta Authorization Server | Single auth server with two clients: (a) **Web confidential client** — auth-code for React login, access_token forwarded through agent to Gateway for per-user Cedar auth; (b) **M2M confidential client** — `client_credentials` for Gateway→LOB outbound auth only. |
+| Okta Authorization Server | Single auth server with two clients: (a) **Web confidential client** — auth-code for React login, access_token forwarded through agent to Gateway for tool-level Cedar auth; (b) **M2M confidential client** — `client_credentials` for Gateway→LOB outbound auth only. |
 | AgentCore Runtime — Agent | Hosts `lobfederation_agent` (Strands + Claude Sonnet 4.5). Discovers LOBs from Agent Registry at startup, connects to Gateway via MCP protocol. |
 | AgentCore Runtime × 3 — MCP Servers | Hosts `retail_banking_mcp`, `transaction_banking_mcp`, `lending_wealth_mcp` (FastMCP, MCP protocol). Each validates inbound JWTs via `customJWTAuthorizer`. |
 | Agent Registry | Central catalog of LOB MCP servers. Agent queries `search_registry_records()` at startup — no hardcoded LOB endpoints. |
-| AgentCore Gateway | Routes tool calls to the correct LOB MCP server by tool-name prefix. Okta JWT inbound auth (user token, Cedar per-user), OAuth M2M outbound auth, unified exposure of all 16 tools through a single MCP endpoint. |
+| AgentCore Gateway | Routes tool calls to the correct LOB MCP server by tool-name prefix. Okta JWT inbound auth (user token), Cedar tool-level authorization, OAuth M2M outbound auth, unified exposure of all 16 tools through a single MCP endpoint. |
 | Bedrock Knowledge Base | Lending policy PDFs in S3, embeddings in OpenSearch Serverless (Titan v2). Queried by `search_lending_policies` tool in lending-wealth MCP server. |
 | Bedrock Guardrail | PII redaction on input and output (SSN, credit card numbers). Called by ECS backend via `ApplyGuardrail` API — independent of the agent. |
 | Cedar Policy Engine | Attached to Gateway in ENFORCE mode. Permits all authenticated tool calls except `delete_customer` (denied for Scenario 7 demo). |
@@ -241,7 +326,7 @@ Prompts once for confirmation, then destroys all resources in reverse-deploy ord
 ```
 Browser → Okta JWT → CloudFront → ALB → ECS Backend
   → Bearer user JWT → Agent Runtime (customJWTAuthorizer validates)
-    → user JWT forwarded → Gateway (Cedar per-user auth)
+    → user JWT forwarded → Gateway (Cedar tool-level auth)
       → Okta M2M OAuth (credential provider) → LOB MCP Server (customJWTAuthorizer)
         → IAM (runtime role) → DynamoDB / Bedrock KB
 ```
@@ -255,7 +340,7 @@ Browser → Okta JWT → CloudFront → ALB → ECS Backend
 
 | Decision | Approach | Rationale |
 |---|---|---|
-| Cross-account auth | OAuth M2M (not IAM roles) | Cross-account IAM requires dual resource-based policies (runtime + endpoint) adding deployment complexity (6 policies for 3 LOBs). OAuth M2M is simpler, consistently documented, and matches all reference implementations. User JWT propagates to Gateway for Cedar per-user auth; Gateway→LOB uses M2M. Pure IAM cross-account is supported via `PutResourcePolicy` if preferred — see [Resource-based policies docs](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/resource-based-policies.html). |
+| Cross-account auth | OAuth M2M (not IAM roles) | Cross-account IAM requires dual resource-based policies (runtime + endpoint) adding deployment complexity (6 policies for 3 LOBs). OAuth M2M is simpler, consistently documented, and matches all reference implementations. User JWT propagates to Gateway for Cedar tool-level auth; Gateway→LOB uses M2M. Pure IAM cross-account is supported via `PutResourcePolicy` if preferred — see [Resource-based policies docs](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/resource-based-policies.html). |
 | Tool discovery | Agent Registry (`search_registry_records`) | Agent doesn't hardcode LOB endpoints. New LOBs register and are discovered automatically. |
 | Data location | Stays in LOB accounts | Data sovereignty, compliance, blast radius isolation. |
 | Tool routing | AgentCore Gateway (tool-name prefix) | Single MCP endpoint exposes all 16 tools; Gateway routes each call to the owning LOB by name prefix — no manual routing logic. |
