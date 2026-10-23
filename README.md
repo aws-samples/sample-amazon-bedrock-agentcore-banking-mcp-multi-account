@@ -22,7 +22,7 @@ What the authorization layer actually enforces in this sample:
 - The Cedar policy attached to the Gateway runs in ENFORCE mode and permits every
   authenticated user to call every tool, **except** `delete_customer`, which is denied
   (see Demo Scenario 7). It is a tool-level allow/deny demonstration — it is **not**
-  per-record or per-customer authorization.
+  per-internal-user or per-record authorization.
 - The MCP tool functions query by the `customer_id` / `account_id` passed in the request.
   They do **not** perform server-side ownership checks, by design, because the RM persona is
   expected to access all customers. `evaluate.py` exercises this intended access model
